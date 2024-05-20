@@ -6,6 +6,12 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+eval_iters = 200
+eval_interval = 300
+max_iters = 3000
+learning_rate = 1e-2
+
 # read it in to inspect it
 with open('GPT_Summer/Starter_Example/input.txt', 'r', encoding='utf-8') as f:
     text = f.read()
@@ -48,6 +54,7 @@ def get_batch(split):
     ix = torch.randint(len(data)-block_size, (batch_size,))
     x = torch.stack([data[i:i+block_size] for i in ix])
     y = torch.stack([data[i+1:i+block_size+1] for i in ix])
+    x, y = x.to(device), y.to(device)
     return x, y
 
 xb, yb = get_batch('train')
@@ -64,6 +71,20 @@ for b in range(batch_size):
         context = xb[b, :t+1]
         target = yb[b,t]
         print(f'When target is {context.tolist()} the target: {target}')
+
+@torch.no_grad()
+def estimate_loss():
+    out = {}
+    model.eval()
+    for split in ['train', 'val']:
+        losses =torch.zeros(eval_iters)
+        for k in range(eval_iters):
+            X, Y = get_batch(split)
+            logits, loss = model(X, Y)
+            losses[k] = loss.item()
+        out[split] = losses.mean()
+    model.train()
+    return out
 
 class BigramLanguageModel(nn.Module):
 
@@ -100,7 +121,28 @@ class BigramLanguageModel(nn.Module):
         return idx
 
     
-m = BigramLanguageModel(vocab_size)
+model = BigramLanguageModel(vocab_size)
+m = model.to(device)
+
 logits, loss = m(xb,yb)
 print(logits.shape)
 print(loss)
+
+#prints garbage at this point
+print(decode(m.generate(idx = torch.zeros((1,1), dtype=torch.long), max_new_tokens=100)[0].tolist()))
+
+#optimizer
+optimizer = torch.optim.AdamW(m.parameters(), lr=learning_rate)
+batch_size = 32
+for steps in range(max_iters):#train model, takes roughly 20 seconds
+    if steps % eval_interval == 0:
+        losses = estimate_loss()
+        print(f"step {steps}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+    xb, yb = get_batch('train')
+    #evaluate the loss
+    logit, loss  =m(xb, yb)
+    optimizer.zero_grad(set_to_none=True)
+    loss.backward()
+    optimizer.step()
+print(loss.item())
+print(decode(m.generate(idx = torch.zeros((1,1), dtype=torch.long, device=device), max_new_tokens=500)[0].tolist()))
