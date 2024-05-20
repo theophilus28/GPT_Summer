@@ -11,6 +11,9 @@ eval_iters = 200
 eval_interval = 300
 max_iters = 3000
 learning_rate = 1e-2
+block_size = 8 #max number of tokens used as context
+batch_size = 32 #how many independent sequences in parallel
+n_embed = 32
 
 # read it in to inspect it
 with open('GPT_Summer/Starter_Example/input.txt', 'r', encoding='utf-8') as f:
@@ -34,7 +37,6 @@ n = int(0.9*len(data)) # first 90% will be train, rest val
 train_data = data[:n]
 val_data = data[n:]
 
-block_size = 8
 train_data[:block_size+1]
 
 x=train_data[:block_size]
@@ -45,8 +47,6 @@ for t in range(block_size):
     print(f"when input is {context} the target: {target}")
 
 torch.manual_seed(1337)
-batch_size = 4 #how many independent sequences will be running in parallel
-block_size = 8 #max context length for predictions
 
 def get_batch(split):
     #gen small batch of data of inputs x and targets y
@@ -88,14 +88,21 @@ def estimate_loss():
 
 class BigramLanguageModel(nn.Module):
 
-    def __init__(self, vocab_size):
+    def __init__(self):
         super().__init__()
         #each token directly reads off the logits for the next token from the lookup table
-        self.token_embedding_table = nn.Embedding(vocab_size, vocab_size)
+        self.token_embedding_table = nn.Embedding(vocab_size, n_embed)
+        self.position_embedding_table = nn.Embedding(block_size, n_embed)
+        self.lm_head = nn.linear(n_embed, vocab_size)
 
     def forward(self, idx, targets = None):
+        B, T = idx.shape
+
         #idx and targets are both (B,T) tensor of integers
-        logits = self.token_embedding_table(idx) # (B,T,C) batch, time, channel
+        token_embed = self.token_embedding_table(idx) # (B,T,C) batch, time, channel
+        pos_embed = self.position_embedding_table(torch.arange(T, device=device)) #(T,C)
+        x = token_embed + pos_embed
+        logits = self.lm_head(x) #(B,T,vocab_size)
         if targets is None:
             loss = None
         else:
@@ -121,7 +128,7 @@ class BigramLanguageModel(nn.Module):
         return idx
 
     
-model = BigramLanguageModel(vocab_size)
+model = BigramLanguageModel()
 m = model.to(device)
 
 logits, loss = m(xb,yb)
@@ -164,7 +171,7 @@ wei = wei / wei.sum(1, keepdim=True)
 xbow2 = wei @ x #(B, ,T) @ (B, T, C) ----> (B,T,C)
 torch.allclose(xbow, xbow2)
 
-#xbow 3rd version
+#xbow 3rd version, determines affinities of elementes to one another using lower triangle
 tril = torch.tril(torch.ones(T,T))
 wei = torch.zeros((T, T))
 wei = wei.masked_fill(tril == 0, float('-inf'))
