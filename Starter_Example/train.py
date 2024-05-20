@@ -146,3 +146,29 @@ for steps in range(max_iters):#train model, takes roughly 20 seconds
     optimizer.step()
 print(loss.item())
 print(decode(m.generate(idx = torch.zeros((1,1), dtype=torch.long, device=device), max_new_tokens=500)[0].tolist()))
+
+B, T, C = 4, 8, 2
+x = torch.randn(B, T, C)
+x.shape
+
+#we want x[b,t] = mean_{i<=t} x{b,i}
+xbow = torch.zeros(B, T, C)
+for b in range(B):
+    for t in range(T):
+        xprev = x[b, :t+1] #(t,C)
+        xbow[b, t] = torch.mean(xprev, 0)
+
+#xbow second version
+wei = torch.tril(torch.ones(T,T))
+wei = wei / wei.sum(1, keepdim=True)
+xbow2 = wei @ x #(B, ,T) @ (B, T, C) ----> (B,T,C)
+torch.allclose(xbow, xbow2)
+
+#xbow 3rd version
+tril = torch.tril(torch.ones(T,T))
+wei = torch.zeros((T, T))
+wei = wei.masked_fill(tril == 0, float('-inf'))
+wei = F.softmax(wei, dim=-1)
+xbow3 = wei @ x
+torch.allclose(xbow, xbow3)
+
