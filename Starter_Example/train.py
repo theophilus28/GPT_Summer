@@ -93,7 +93,7 @@ class BigramLanguageModel(nn.Module):
         #each token directly reads off the logits for the next token from the lookup table
         self.token_embedding_table = nn.Embedding(vocab_size, n_embed)
         self.position_embedding_table = nn.Embedding(block_size, n_embed)
-        self.lm_head = nn.linear(n_embed, vocab_size)
+        self.lm_head = nn.Linear(n_embed, vocab_size)
 
     def forward(self, idx, targets = None):
         B, T = idx.shape
@@ -139,7 +139,7 @@ print(loss)
 print(decode(m.generate(idx = torch.zeros((1,1), dtype=torch.long), max_new_tokens=100)[0].tolist()))
 
 #optimizer
-optimizer = torch.optim.AdamW(m.parameters(), lr=learning_rate)
+"""optimizer = torch.optim.AdamW(m.parameters(), lr=learning_rate)
 batch_size = 32
 for steps in range(max_iters):#train model, takes roughly 20 seconds
     if steps % eval_interval == 0:
@@ -179,3 +179,22 @@ wei = F.softmax(wei, dim=-1)
 xbow3 = wei @ x
 torch.allclose(xbow, xbow3)
 
+# version 4: self attention
+B, T, C = 4, 8, 32
+x = torch.randn(B, T, C)
+
+head_size = 16
+key = nn.Linear(C, head_size, bias=False)
+query = nn.Linear(C, head_size, bias=False)
+k = key(x) # (B,T,16)
+q = query(x) # (B,T,16)
+wei = q @ k.transpose(-2, -1) # (B,T,16) @ (B,16,T) ---> (B,T,T)
+
+tril = torch.tril(torch.ones(T,T))
+#wei = torch.zeros(T,T)
+wei = wei.masked_fill(tril == 0, float('-inf'))
+wei = F.softmax(wei, dim=-1)
+v = value(x)
+out = wei  @ v
+out.shape
+"""
