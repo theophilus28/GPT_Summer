@@ -86,6 +86,28 @@ def estimate_loss():
     model.train()
     return out
 
+class Head(nn.Module):
+    def __init__(self, head_size):
+        super().__init__()
+        self.key = nn.Linear(n_embed, head_size, bias=False)
+        self.query = nn.Linear(n_embed, head_size, bias=False)
+        self.value = nn.Linear(n_embed, head_size, bias=False)
+        self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
+                             
+    def forward(self,x):
+        B, T, C= x.shape
+        k = self.key
+        q = self.query
+        #compute attnetion scores/affinities
+        wei = q @ k.transpose(-2,-1) * C**-0.5 # (B,T,C) @ (B,C,T) --> (B,T,T)
+        wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
+        wie = F.softmax(wei, dim=-1)
+        #perform weighted aggregation of values
+        v = self.value(x)
+        out = wei @ v
+        return out
+
+
 class BigramLanguageModel(nn.Module):
 
     def __init__(self):
@@ -93,7 +115,8 @@ class BigramLanguageModel(nn.Module):
         #each token directly reads off the logits for the next token from the lookup table
         self.token_embedding_table = nn.Embedding(vocab_size, n_embed)
         self.position_embedding_table = nn.Embedding(block_size, n_embed)
-        self.lm_head = nn.Linear(n_embed, vocab_size)
+        self.sa_head = Head(n_embed)
+        self.lm_head = nn.Linear(n_embed,  vocab_size)
 
     def forward(self, idx, targets = None):
         B, T = idx.shape
@@ -102,6 +125,7 @@ class BigramLanguageModel(nn.Module):
         token_embed = self.token_embedding_table(idx) # (B,T,C) batch, time, channel
         pos_embed = self.position_embedding_table(torch.arange(T, device=device)) #(T,C)
         x = token_embed + pos_embed
+        x = self.sa_head(x) # apply one head of self attention
         logits = self.lm_head(x) #(B,T,vocab_size)
         if targets is None:
             loss = None
@@ -115,12 +139,14 @@ class BigramLanguageModel(nn.Module):
     def generate(self, idx, max_new_tokens):
         #idx is (B,T) array of indeces in the current context
         for _ in range(max_new_tokens):
+            #crop idx to the last block_size token
+            idx_cond = idx[:, -block_size:]
             #get predicitons
-            logits, loss = self(idx)
+            logits, loss = self(idx_cond)
             #ofucs only on last time step
             logits = logits[:, -1, :]
             #apply softmax to get probabilities
-            probs = F.softmax(logits, dim=-1)# (B,C)
+            probs = F.softmax(logits, dim=-1)# (B,C)s
             #sample from distribution
             idx_next = torch.multinomial(probs, num_samples=1) # (B, 1)
             #append sampled index to running sequence
@@ -139,7 +165,7 @@ print(loss)
 print(decode(m.generate(idx = torch.zeros((1,1), dtype=torch.long), max_new_tokens=100)[0].tolist()))
 
 #optimizer
-"""optimizer = torch.optim.AdamW(m.parameters(), lr=learning_rate)
+optimizer = torch.optim.AdamW(m.parameters(), lr=learning_rate)
 batch_size = 32
 for steps in range(max_iters):#train model, takes roughly 20 seconds
     if steps % eval_interval == 0:
@@ -197,4 +223,3 @@ wei = F.softmax(wei, dim=-1)
 v = value(x)
 out = wei  @ v
 out.shape
-"""
