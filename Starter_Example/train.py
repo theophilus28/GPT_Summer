@@ -96,8 +96,8 @@ class Head(nn.Module):
                              
     def forward(self,x):
         B, T, C= x.shape
-        k = self.key
-        q = self.query
+        k = self.key(x)
+        q = self.query(x)
         #compute attnetion scores/affinities
         wei = q @ k.transpose(-2,-1) * C**-0.5 # (B,T,C) @ (B,C,T) --> (B,T,T)
         wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
@@ -212,6 +212,7 @@ x = torch.randn(B, T, C)
 head_size = 16
 key = nn.Linear(C, head_size, bias=False)
 query = nn.Linear(C, head_size, bias=False)
+value = nn.Linear(C, head_size, bias=False)
 k = key(x) # (B,T,16)
 q = query(x) # (B,T,16)
 wei = q @ k.transpose(-2, -1) # (B,T,16) @ (B,16,T) ---> (B,T,T)
