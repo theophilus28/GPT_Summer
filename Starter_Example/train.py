@@ -8,9 +8,9 @@ from torch.nn import functional as F
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 eval_iters = 200
-eval_interval = 300
-max_iters = 3000
-learning_rate = 1e-2
+eval_interval = 500
+max_iters = 5000
+learning_rate = 1e-3
 block_size = 8 #max number of tokens used as context
 batch_size = 32 #how many independent sequences in parallel
 n_embed = 32
@@ -77,7 +77,7 @@ def estimate_loss():
     out = {}
     model.eval()
     for split in ['train', 'val']:
-        losses =torch.zeros(eval_iters)
+        losses = torch.zeros(eval_iters)
         for k in range(eval_iters):
             X, Y = get_batch(split)
             logits, loss = model(X, Y)
@@ -101,7 +101,7 @@ class Head(nn.Module):
         #compute attnetion scores/affinities
         wei = q @ k.transpose(-2,-1) * C**-0.5 # (B,T,C) @ (B,C,T) --> (B,T,T)
         wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
-        wie = F.softmax(wei, dim=-1)
+        wei = F.softmax(wei, dim=-1)
         #perform weighted aggregation of values
         v = self.value(x)
         out = wei @ v
@@ -127,6 +127,7 @@ class BigramLanguageModel(nn.Module):
         x = token_embed + pos_embed
         x = self.sa_head(x) # apply one head of self attention
         logits = self.lm_head(x) #(B,T,vocab_size)
+
         if targets is None:
             loss = None
         else:
@@ -166,14 +167,13 @@ print(decode(m.generate(idx = torch.zeros((1,1), dtype=torch.long), max_new_toke
 
 #optimizer
 optimizer = torch.optim.AdamW(m.parameters(), lr=learning_rate)
-batch_size = 32
 for steps in range(max_iters):#train model, takes roughly 20 seconds
     if steps % eval_interval == 0:
         losses = estimate_loss()
         print(f"step {steps}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
     xb, yb = get_batch('train')
     #evaluate the loss
-    logit, loss  =m(xb, yb)
+    logit, loss  = m(xb, yb)
     optimizer.zero_grad(set_to_none=True)
     loss.backward()
     optimizer.step()
