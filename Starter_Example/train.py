@@ -138,9 +138,12 @@ class Block(nn.Module):
         head_size = n_embed // n_head
         self.sa = MultHeadAttention(n_head, head_size)
         self.ffwd = FeedForward(n_embed)
+        self.ln1 = nn.LayerNorm(n_embed)
+        self.ln2 = nn.LayerNorm(n_embed)
+
     def forward(self, x):
-        x = x + self.sa(x)
-        x = x + self.ffwd(x)
+        x = x + self.sa(self.ln1(x))
+        x = x + self.ffwd(self.ln2(x))
         return x
 
 class BigramLanguageModel(nn.Module):
@@ -218,7 +221,7 @@ for steps in range(max_iters):#train model, takes roughly 20 seconds
     optimizer.zero_grad(set_to_none=True)
     loss.backward()
     optimizer.step()
-print(loss.item())
+print(f"step {steps}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
 print(decode(m.generate(idx = torch.zeros((1,1), dtype=torch.long, device=device), max_new_tokens=500)[0].tolist()))
 
 B, T, C = 4, 8, 2
