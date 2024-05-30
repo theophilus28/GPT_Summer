@@ -7,15 +7,12 @@ import torch.nn as nn
 from torch.nn import functional as F
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-print(device)
-print(torch.__version__)
-quit()
 eval_iters = 200
 eval_interval = 500
 max_iters = 5000
-learning_rate = 3e-3
-block_size = 64 #max number of tokens used as context
-batch_size = 256 #how many independent sequences in parallel
+learning_rate = 3e-4
+block_size = 256 #max number of tokens used as context
+batch_size = 64 #how many independent sequences in parallel
 n_embed = 384
 n_head = 6
 n_layer = 6
@@ -45,6 +42,7 @@ val_data = data[n:]
 
 train_data[:block_size+1]
 
+
 """x=train_data[:block_size]
 y=train_data[1:block_size+1]
 for t in range(block_size):
@@ -63,8 +61,8 @@ def get_batch(split):
     x, y = x.to(device), y.to(device)
     return x, y
 
-"""xb, yb = get_batch('train')
-print('inputs: ')
+xb, yb = get_batch('train')
+"""print('inputs: ')
 print(xb.shape)
 print(xb)
 print('targets: ')
@@ -107,6 +105,7 @@ class Head(nn.Module):
         q = self.query(x)
         #compute attnetion scores/affinities
         wei = q @ k.transpose(-2,-1) * C**-0.5 # (B,T,C) @ (B,C,T) --> (B,T,T)
+        #wei = q @ k.transpose(-2,-1) * k.shape[-1]**-0.5 # (B, T, hs) @ (B, hs, T) -> (B, T, T) from repo
         wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
         wei = F.softmax(wei, dim=-1)
         wei = self.dropout(wei)
@@ -163,17 +162,22 @@ class BigramLanguageModel(nn.Module):
         #each token directly reads off the logits for the next token from the lookup table
         self.token_embedding_table = nn.Embedding(vocab_size, n_embed)
         self.position_embedding_table = nn.Embedding(block_size, n_embed)
-        """self.blocks = nn.Sequential(
-            Block(n_embed, n_head=4),
-            Block(n_embed, n_head=4),
-            Block(n_embed, n_head=4),
-            nn.LayerNorm(n_embed)
-        )"""
         self.blocks = nn.Sequential(*[Block(n_embed, n_head=n_head) for _ in range(n_layer)])
         self.ln_f = nn.LayerNorm(n_embed)
         self.sa_heads = MultHeadAttention(4, n_embed//4) #4 heads of 8-dimensional self-attention
         self.ffwd = FeedForward(n_embed)
         self.lm_head = nn.Linear(n_embed,  vocab_size)
+
+        # better init, not covered in the original GPT video, but important
+        #self.apply(self._init_weights)
+
+    """def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)"""
 
     def forward(self, idx, targets = None):
         B, T = idx.shape
@@ -183,6 +187,7 @@ class BigramLanguageModel(nn.Module):
         pos_embed = self.position_embedding_table(torch.arange(T, device=device)) #(T,C)
         x = token_embed + pos_embed
         x = self.blocks(x)
+        x = self.ln_f(x) # (B,T,C)
         logits = self.lm_head(x) #(B,T,vocab_size)
 
         if targets is None:
@@ -224,19 +229,21 @@ print(loss)
 
 #optimizer
 optimizer = torch.optim.AdamW(m.parameters(), lr=learning_rate)
-for steps in range(max_iters):#train model, takes roughly 20 seconds
-    if steps % eval_interval == 0:
+for iter in range(max_iters):#train model, takes roughly 20 seconds
+    if iter % eval_interval == 0 or iter == max_iters - 1:
         losses = estimate_loss()
-        print(f"step {steps}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+        print(f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
     xb, yb = get_batch('train')
     #evaluate the loss
     logit, loss  = m(xb, yb)
     optimizer.zero_grad(set_to_none=True)
     loss.backward()
     optimizer.step()
-print(f"step {steps}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+#context = torch.zeros((1, 1), dtype=torch.long, device=device) #from repo
 print(decode(m.generate(idx = torch.zeros((1,1), dtype=torch.long, device=device), max_new_tokens=500)[0].tolist()))
 
+
+#----Code that exists for theory, not actually needed for generation or training-----
 B, T, C = 4, 8, 2
 x = torch.randn(B, T, C)
 x.shape
@@ -281,3 +288,4 @@ wei = F.softmax(wei, dim=-1)
 v = value(x)
 out = wei  @ v
 out.shape
+#--------------------------------------------------------------------
