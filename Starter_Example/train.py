@@ -7,13 +7,19 @@ import torch.nn as nn
 from torch.nn import functional as F
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
+print(device)
+print(torch.__version__)
+quit()
 eval_iters = 200
 eval_interval = 500
 max_iters = 5000
-learning_rate = 1e-3
-block_size = 8 #max number of tokens used as context
-batch_size = 32 #how many independent sequences in parallel
-n_embed = 32
+learning_rate = 3e-3
+block_size = 64 #max number of tokens used as context
+batch_size = 256 #how many independent sequences in parallel
+n_embed = 384
+n_head = 6
+n_layer = 6
+dropout = 0.2
 
 # read it in to inspect it
 with open('GPT_Summer/Starter_Example/input.txt', 'r', encoding='utf-8') as f:
@@ -39,12 +45,12 @@ val_data = data[n:]
 
 train_data[:block_size+1]
 
-x=train_data[:block_size]
+"""x=train_data[:block_size]
 y=train_data[1:block_size+1]
 for t in range(block_size):
     context = x[:t+1]
     target = y[t]
-    print(f"when input is {context} the target: {target}")
+    print(f"when input is {context} the target: {target}")"""
 
 torch.manual_seed(1337)
 
@@ -57,7 +63,7 @@ def get_batch(split):
     x, y = x.to(device), y.to(device)
     return x, y
 
-xb, yb = get_batch('train')
+"""xb, yb = get_batch('train')
 print('inputs: ')
 print(xb.shape)
 print(xb)
@@ -70,7 +76,7 @@ for b in range(batch_size):
     for t in range(block_size):
         context = xb[b, :t+1]
         target = yb[b,t]
-        print(f'When target is {context.tolist()} the target: {target}')
+        print(f'When target is {context.tolist()} the target: {target}')"""
 
 @torch.no_grad()
 def estimate_loss():
@@ -93,6 +99,7 @@ class Head(nn.Module):
         self.query = nn.Linear(n_embed, head_size, bias=False)
         self.value = nn.Linear(n_embed, head_size, bias=False)
         self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
+        self.dropout = nn.Dropout(dropout)
                              
     def forward(self,x):
         B, T, C= x.shape
@@ -102,6 +109,7 @@ class Head(nn.Module):
         wei = q @ k.transpose(-2,-1) * C**-0.5 # (B,T,C) @ (B,C,T) --> (B,T,T)
         wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
         wei = F.softmax(wei, dim=-1)
+        wei = self.dropout(wei)
         #perform weighted aggregation of values
         v = self.value(x)
         out = wei @ v
@@ -113,10 +121,11 @@ class MultHeadAttention(nn.Module):
         super().__init__()
         self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
         self.proj = nn.Linear(n_embed, n_embed)
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
         out = torch.cat([h(x) for h in self.heads], dim=-1)
-        out = self.proj(out)
+        out = self.dropout(self.proj(out))
         return out
     
 class FeedForward(nn.Module):
@@ -126,7 +135,8 @@ class FeedForward(nn.Module):
         self.net = nn.Sequential(
             nn.Linear(n_embed, 4 * n_embed),
             nn.ReLU(),
-            nn.Linear(4 * n_embed, n_embed)
+            nn.Linear(4 * n_embed, n_embed),
+            nn.Dropout(dropout)
         )
     def forward(self, x):
         return self.net(x)
@@ -153,12 +163,14 @@ class BigramLanguageModel(nn.Module):
         #each token directly reads off the logits for the next token from the lookup table
         self.token_embedding_table = nn.Embedding(vocab_size, n_embed)
         self.position_embedding_table = nn.Embedding(block_size, n_embed)
-        self.blocks = nn.Sequential(
+        """self.blocks = nn.Sequential(
             Block(n_embed, n_head=4),
             Block(n_embed, n_head=4),
             Block(n_embed, n_head=4),
             nn.LayerNorm(n_embed)
-        )
+        )"""
+        self.blocks = nn.Sequential(*[Block(n_embed, n_head=n_head) for _ in range(n_layer)])
+        self.ln_f = nn.LayerNorm(n_embed)
         self.sa_heads = MultHeadAttention(4, n_embed//4) #4 heads of 8-dimensional self-attention
         self.ffwd = FeedForward(n_embed)
         self.lm_head = nn.Linear(n_embed,  vocab_size)
@@ -208,7 +220,7 @@ print(logits.shape)
 print(loss)
 
 #prints garbage at this point
-print(decode(m.generate(idx = torch.zeros((1,1), dtype=torch.long), max_new_tokens=100)[0].tolist()))
+#print(decode(m.generate(idx = torch.zeros((1,1), dtype=torch.long), max_new_tokens=100)[0].tolist()))
 
 #optimizer
 optimizer = torch.optim.AdamW(m.parameters(), lr=learning_rate)
