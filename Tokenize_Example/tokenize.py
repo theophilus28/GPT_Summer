@@ -19,7 +19,6 @@ def get_stats(ids):
     return counts
 
 stats = get_stats(tokens)
-#print(stats)
 print(sorted(((v,k) for k,v in stats.items()), reverse=True)) #prints sorted stats by most often occuring
 
 top_pair = max(stats, key=stats.get)
@@ -58,4 +57,13 @@ for i in range(num_merges):
     print(f"Merging {pair} into a new token {idx}")
     ids = merge(ids, pair, idx)
     merges[pair] = idx
+
+print("Tokens length:", len(tokens))
+print("IDS length:", len(ids))
+print(f"Compression ratio: {len(tokens) / len(ids):.2f}X")
+
+vocab = {idx:  bytes([idx]) for idx in range(256)}
+for(p0, p1), idx in merges.items():
+    vocab[idx] = vocab[p0] + vocab[p1]
+def decode(ids):
     
