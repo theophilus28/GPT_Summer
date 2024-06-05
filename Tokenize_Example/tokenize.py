@@ -72,3 +72,17 @@ def decode(ids):
     return text
 
 print(decode([128]))
+
+def encode(text):
+    tokens = list(text.encode("utf-8"))
+    while len(tokens) >= 2: #deals with single char strings
+        stats = get_stats(tokens)
+        pair = min(stats, key=lambda p: merges.get(p, float("inf")))
+        if pair not in merges:
+            break #nothing else can be merged
+        idx = merges[pair]
+        tokens = merge(tokens, pair, idx)
+    return tokens
+print(encode("hellow world!"))
+text2 = decode(encode(text))
+print(text2 == text)
