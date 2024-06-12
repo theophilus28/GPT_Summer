@@ -23,3 +23,4 @@ class GPT(nn.module):
             h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
             ln_f = nn.LayerNorm(config.n_embed)
         ))
+        self.lm_head = nn.Linear(config.n_embed, config.vocab_size, bias=False)
