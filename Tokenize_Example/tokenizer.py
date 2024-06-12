@@ -152,3 +152,6 @@ sp = spm.SentencePieceProcessor()
 sp.load('tok400.model')
 vocab = [[sp.id_to_piece(idx), idx] for idx in range(sp.get_piece_size())]
 vocab
+
+ids = sp.encode("hello 안녕하세요")
+print(ids)
