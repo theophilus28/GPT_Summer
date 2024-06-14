@@ -15,7 +15,7 @@ class CasualSelfAttention(nn.Module):
         #output projection
         self.c_proj = nn.Linear(config.n_embed, config.n_embed)
         #regularization
-        self.n_head = config.n_embed
+        self.n_head = config.n_head
         self.n_embed = config.n_embed
         #not really 'bias', more of a mask, but following OpenAI/HF naming though
         self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size)).view(1, 1, config.block_size, config.block_size))
@@ -32,7 +32,7 @@ class CasualSelfAttention(nn.Module):
         att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
         att = F.softmax(att, dim=-1)
         y = att @ v #(B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
-        y = y.tranpose(1, 2).contiguous().view(B, T, C) # reassemble all head outputs side by side
+        y = y.transpose(1, 2).contiguous().view(B, T, C) # reassemble all head outputs side by side
         #output projection
         y = self.c_proj(y)
         return y
@@ -59,8 +59,9 @@ class Block(nn.Module):
         self.mlp = MLP(config)
 
     def forward(self, x):
-        x = x +self.attn(self.ln_1(x))
-        x = x +self.mlp(self.ln_2(x))
+        x = x + self.attn(self.ln_1(x))
+        x = x + self.mlp(self.ln_2(x))
+        return x
 
 @dataclass
 class GPTConfig:
@@ -82,6 +83,23 @@ class GPT(nn.Module):
             ln_f = nn.LayerNorm(config.n_embed)
         ))
         self.lm_head = nn.Linear(config.n_embed, config.vocab_size, bias=False)
+
+    def forward(self, idx):
+        # dx is of shape (B, T)
+        B, T =  idx.size()
+        assert T <= self.config.block_size, f"Cannot forward seqience of length {T}, block size is only {self.config.block_size}"
+        #forward the token and position embeddings
+        pos =  torch.arange(0, T, dtype=torch.long, device=idx.device) # shape (T)
+        pos_emb =  self.transformer.wpe(pos) #psoition embeddings of shape (T, n_embed)
+        tok_emb =  self.transformer.wte(idx) # token embeddings of shape (B, T, n_embed)
+        x = tok_emb + pos_emb
+        #forward the blocks of the transformer
+        for block in self.transformer.h:
+            x = block(x)
+        #forward the final leyernorm and the classifier
+        x = self.transformer.ln_f(x)
+        logits = self.lm_head(x) #(B, T, vocab_size)
+        return logits
 
     #this next class is copy and pasted in from repo
     @classmethod
@@ -132,6 +150,36 @@ class GPT(nn.Module):
                     sd[k].copy_(sd_hf[k])
 
         return model
-#------------------------------------------------------------------------------\
+#------------------------------------------------------------------------------
+num_return_sequences = 5
+max_length = 30
 model = GPT.from_pretrained('gpt2')
-print("Epic! We didn't crash!")
+model.eval()
+model.to('cuda')
+
+#prefix tokens
+import tiktoken
+enc = tiktoken.get_encoding('gpt2')
+tokens = enc.encode("Hello, I'm a language model,")
+tokens = torch.tensor(tokens, dtype=torch.long)
+tokens = tokens.unsqueeze(0).repeat(num_return_sequences, 1)
+x = tokens.to('cuda')
+
+#generate! righ now x is (B, T) where B =  5, T = 8
+torch.manual_seed(42)
+torch.cuda.manual_seed(42)
+while x.size(1) < max_length:
+    with torch.no_grad():
+        logits = model(x)
+        logits = logits[:, -1, :]
+        probs =  F.softmax(logits, dim=-1)
+        topk_probs, topk_indices = torch.topk(probs, 50, dim=-1)
+        ix = torch.multinomial(topk_probs, 1)
+        xcol = torch.gather(topk_indices, -1, ix)
+        x = torch.cat((x, xcol), dim=1)
+
+#print the generated text
+for i in range(num_return_sequences):
+    tokens = x[i, :max_length].tolist()
+    decoded = enc.decode(tokens)
+    print(">", decoded)
