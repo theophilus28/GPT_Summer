@@ -84,7 +84,7 @@ class GPT(nn.Module):
         ))
         self.lm_head = nn.Linear(config.n_embed, config.vocab_size, bias=False)
 
-    def forward(self, idx):
+    def forward(self, idx, targets=None):
         # dx is of shape (B, T)
         B, T =  idx.size()
         assert T <= self.config.block_size, f"Cannot forward seqience of length {T}, block size is only {self.config.block_size}"
@@ -99,7 +99,10 @@ class GPT(nn.Module):
         #forward the final leyernorm and the classifier
         x = self.transformer.ln_f(x)
         logits = self.lm_head(x) #(B, T, vocab_size)
-        return logits
+        loss = None
+        if targets is not None:
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
+        return logits, loss
 
     #this next class is copy and pasted in from repo
     @classmethod
@@ -175,7 +178,7 @@ y = buf[1:].view(B, T)
 # get logits
 model = GPT(GPTConfig())
 model.to(device)
-logits, loss = model(x)
+logits, loss = model(x, y)
 
 print(loss)
 import sys; sys.exit(0)
