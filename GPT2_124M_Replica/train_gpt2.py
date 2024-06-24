@@ -98,7 +98,7 @@ class GPT(nn.Module):
             std = 0.02
             if hasattr(module, 'NANOGPT_SCALE_INIT'):
                 std *= (2 * self.config.n_layer) **-0.5
-            torch.nn.init.noraml_(module.weight, mean=0.0, std=std)
+            torch.nn.init.normal_(module.weight, mean=0.0, std=std)
             if module.bias is not None:
                 torch.nn.init.zeros_(module.bias)
             elif isinstance(module, nn.Embedding):
@@ -209,6 +209,10 @@ if torch.cuda.is_available():
 elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
     device = "mps"
 print(f"using device: {device}")
+
+torch.manual_seed(1337)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed(1337)
 
 #replaces the get data batch segment
 train_loader = DataLoaderLite(B=4, T=32)
