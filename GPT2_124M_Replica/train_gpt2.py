@@ -72,7 +72,7 @@ class Block(nn.Module):
 @dataclass
 class GPTConfig:
     block_size: int = 1024 #max sequence length
-    vocab_size: int = 50267 #number of tokens: 50,000 merges, 256 byte tokens, 1 <|endoftext|> token
+    vocab_size: int = 50257 #number of tokens: 50,000 merges, 256 byte tokens, 1 <|endoftext|> token
     n_layer: int = 12 #number of heads
     n_head: int = 12 #number of layers
     n_embed: int = 768 #embedding dimension
@@ -224,7 +224,7 @@ train_loader = DataLoaderLite(B=2, T=1024) #want to go 16, 1024 but get CUDA out
 torch.set_float32_matmul_precision('high')
 
 # get logits
-model = GPT(GPTConfig())
+model = GPT(GPTConfig(vocab_size=50304))
 model.to(device)
 # weird errors require me to include this section, something to do with not having triton, but triton is linux only so oh well--------
 #import torch._dynamo
