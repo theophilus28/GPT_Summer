@@ -29,11 +29,14 @@ class CasualSelfAttention(nn.Module):
         k = k.view(B, T, self.n_head, C // self.n_head).transpose(1,2) #(B, nh, T, hs)
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1,2) #(B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1,2) #(B, nh, T, hs)
+
         #attention (materializes the large (T,T) matrix for all the queries and keys)
-        att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
-        att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
-        att = F.softmax(att, dim=-1)
-        y = att @ v #(B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
+        #att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
+        #att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
+        #att = F.softmax(att, dim=-1)
+        #y = att @ v #(B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
+        y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+
         y = y.transpose(1, 2).contiguous().view(B, T, C) # reassemble all head outputs side by side
         #output projection
         y = self.c_proj(y)
@@ -224,10 +227,10 @@ torch.set_float32_matmul_precision('high')
 model = GPT(GPTConfig())
 model.to(device)
 # weird errors require me to include this section, something to do with not having triton, but triton is linux only so oh well--------
-import torch._dynamo
-torch._dynamo.config.suppress_errors = True
+#import torch._dynamo
+#torch._dynamo.config.suppress_errors = True
 #-------------------------------------------------------------------------------------------------------------------------------------
-model = torch.compile(model)
+#model = torch.compile(model)
 
 #optimization
 optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
