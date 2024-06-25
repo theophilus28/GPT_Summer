@@ -223,6 +223,11 @@ torch.set_float32_matmul_precision('high')
 # get logits
 model = GPT(GPTConfig())
 model.to(device)
+# weird errors require me to include this section, something to do with not having triton, but triton is linux only so oh well--------
+import torch._dynamo
+torch._dynamo.config.suppress_errors = True
+#-------------------------------------------------------------------------------------------------------------------------------------
+model = torch.compile(model)
 
 #optimization
 optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
