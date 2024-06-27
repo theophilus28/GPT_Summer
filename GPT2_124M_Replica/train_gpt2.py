@@ -184,8 +184,8 @@ class GPT(nn.Module):
         param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
         #create optim groups. Any params that are 2D will be weight decayed, otherwise no.
         #ie all weight tensors in matmuls + embedding decay, all biases and layernorms dont
-        decay_params = [p for n, p in param_dict.items() if p.dim >= 2]
-        nodecay_params = [p for n, p in param_dict.items() if p.dim < 2]
+        decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
+        nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
         optim_groups = [
             {'params': decay_params, 'weight_decay': weight_decay,
              'params': nodecay_params, 'weight_decay': 0.0}
@@ -242,8 +242,15 @@ torch.manual_seed(1337)
 if torch.cuda.is_available():
     torch.cuda.manual_seed(1337)
 
-#replaces the get data batch segment
-train_loader = DataLoaderLite(B=2, T=1024) #want to go 16, 1024 but get CUDA out of memort error
+total_batch_size = 524288
+B = 2 #micro batch size
+T = 1024 #sequence length
+assert total_batch_size % (B * T) == 0, "make sure total batch size is divisible by B*T"
+grad_accum_steps = total_batch_size //(B * T)
+print(f"total desired batch size: {total_batch_size}")
+print(f"=> calculated gradient accumulation steps: {grad_accum_steps}")
+
+train_loader = DataLoaderLite(B=B, T=T)
 
 torch.set_float32_matmul_precision('high')
 
@@ -266,16 +273,16 @@ def get_lr(it):
     return min_lr +coeff * (max_lr - min_lr)
 
 #optimization
-#optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, betas=(0.9, 0.95), eps=1e-8)
 optimizer = model.configure_optimizers(weight_decay=0.1, learning_rate = 6e-4, device=device)
 for step in range(max_steps):
     t0 = time.time()
-    x, y = train_loader.next_batch()
-    x, y = x.to(device), y.to(device)
     optimizer.zero_grad()
-    with torch.autocast(device_type=device, dtype=torch.bfloat16):
-        logits, loss = model(x, y)
-    loss.backward()
+    for micro_step in range(grad_accum_steps):
+        x, y = train_loader.next_batch()
+        x, y = x.to(device), y.to(device)
+        with torch.autocast(device_type=device, dtype=torch.bfloat16):
+            logits, loss = model(x, y)
+        loss.backward()
     norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
     lr = get_lr(step)
     for param_group in optimizer.param_groups:
