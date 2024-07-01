@@ -1,8 +1,10 @@
-#Theo Barrett-Johnson 6/13/2024
+#Theo Barrett-Johnso0   7/13/2024
 #this code is made with the help of a video, and im going through this for learning purposes
+import os
 import math
 import inspect
 from dataclasses import dataclass
+import time
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
@@ -229,14 +231,35 @@ class DataLoaderLite:
         return x, y
 
 #------------------------------------------------------------------------------
-import time
-#autodetect computing device
-device = "cpu"
-if torch.cuda.is_available():
-    device = "cuda"
-elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-    device = "mps"
-print(f"using device: {device}")
+
+#run training loop
+from torch.distributed import init_process_group, destroy_process_group
+
+#set up DDP (distributed data parallel)
+ddp = int(os.environ.get('RANK', -1)) != -1
+if ddp:
+    #use of DDP atm requires CUDA, set the device appropriately according to rank
+    assert torch.cuda.is_available(), "for now we need CUDA for DDP"
+    init_process_group(backend='nccl')
+    ddp_rank = int(os.environ['RANK'])
+    ddp_local_rank = int(os.environ['LOCAL_RANK'])
+    ddp_world_size = int(os.environ['WORLD_SIZE'])
+    device = f'cuda:{ddp_local_rank}'
+    torch.cuda.set_device(device)
+    master_process = ddp_rank == 0 # this process will do logging, checkpointing etc.
+else:
+    #vanilla non-ddp run
+    ddp_rank = 0
+    ddp_local_rank = 0
+    ddp_world_size = 1
+    master_process = True
+    #autodetect computing device
+    device = "cpu"
+    if torch.cuda.is_available():
+        device = "cuda"
+    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        device = "mps"
+    print(f"using device: {device}")
 
 torch.manual_seed(1337)
 if torch.cuda.is_available():
