@@ -233,6 +233,12 @@ class DataLoaderLite:
         self.current_shard = 0
         self.tokens = load_tokens(self.shards[self.current_shard])
         self.current_position = self.B * self.T * self.process_rank
+
+    def reset(self):
+        # state, init at shard zero
+        self.current_shard = 0
+        self.tokens = load_tokens(self.shards[self.current_shard])
+        self.current_position = self.B * self.T * self.process_rank
         
     def next_batch(self):
         B, T = self.B, self.T
@@ -290,7 +296,7 @@ if torch.cuda.is_available():
     torch.cuda.manual_seed(1337)
 
 total_batch_size = 524288
-B = 2 #micro batch size
+B = 4 #micro batch size ideally want this at 16 at least, but set to 4 to accomodate my gpu situation
 T = 1024 #sequence length
 assert total_batch_size % (B * T) == 0, "make sure total batch size is divisible by B*T"
 grad_accum_steps = total_batch_size //(B * T * ddp_world_size)
@@ -300,13 +306,15 @@ if master_process:
 
 
 train_loader = DataLoaderLite(B=B, T=T, process_rank=ddp_rank, num_processes=ddp_world_size, split="train")
+val_loader = DataLoaderLite(B=B, T=T, process_rank=ddp_rank, num_processes=ddp_world_size, split="val")
 
 torch.set_float32_matmul_precision('high')
 
 # create model
 model = GPT(GPTConfig(vocab_size=50304))
 model.to(device)
-#model = torch.compile(model)
+#uncomment the below line when you are running this to see if it works. It likely only works on linux
+#model = torch.compile(model) 
 if ddp:
     model = DDP(model, device_ids=[ddp_local_rank])
 raw_model = model.module if ddp else model #always contains the "raw" unwrapped model
@@ -327,8 +335,25 @@ def get_lr(it):
 
 #optimization
 optimizer = raw_model.configure_optimizers(weight_decay=0.1, learning_rate = 6e-4, device=device)
+
 for step in range(max_steps):
     t0 = time.time()
+    
+    #once in a while want to evaluate our validation loss
+    if step % 100 == 0:
+        model.eval()
+        val_loader.reset()
+        with torch.no_grad():
+            val_loss_accum = 0.0
+            val_loss_steps = 20
+            for _ in range(val_loss_steps):
+                x, y = val_loader.next_batch()
+                x, y = x.to(device), y.to(device)
+                with torch.autocast(device_type=device, dtype=torch.bfloat16):
+                    logits, loss = model(x, y)
+                
+
+    model.train()
     optimizer.zero_grad()
     loss_accum = 0.0
     for micro_step in range(grad_accum_steps):
