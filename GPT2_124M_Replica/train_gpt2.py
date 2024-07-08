@@ -1,4 +1,4 @@
-#Theo Barrett-Johnso0   7/13/2024
+#Theo Barrett-Johnso0   7/08/2024
 #this code is made with the help of a video, and im going through this for learning purposes
 import os
 import math
@@ -314,7 +314,9 @@ torch.set_float32_matmul_precision('high')
 model = GPT(GPTConfig(vocab_size=50304))
 model.to(device)
 #uncomment the below line when you are running this to see if it works. It likely only works on linux
-#model = torch.compile(model) 
+use_compile = False
+if use_compile:
+    model = torch.compile(model) 
 if ddp:
     model = DDP(model, device_ids=[ddp_local_rank])
 raw_model = model.module if ddp else model #always contains the "raw" unwrapped model
@@ -336,11 +338,19 @@ def get_lr(it):
 #optimization
 optimizer = raw_model.configure_optimizers(weight_decay=0.1, learning_rate = 6e-4, device=device)
 
+#creat log directory we will write checkpoints to
+log_dir = "log"
+os.makedirs(log_dir, exist_ok=True)
+log_file = os.path.join(log_dir, f"log.txt")
+with open(log_file, "w") as f:
+    pass
+
 for step in range(max_steps):
     t0 = time.time()
+    last_step = (step == max_steps - 1)
     
     #once in a while want to evaluate our validation loss
-    if step % 100 == 0:
+    if step % 250 == 0 or last_step:
         model.eval()
         val_loader.reset()
         with torch.no_grad():
