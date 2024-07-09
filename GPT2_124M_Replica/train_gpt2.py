@@ -295,6 +295,8 @@ torch.manual_seed(1337)
 if torch.cuda.is_available():
     torch.cuda.manual_seed(1337)
 
+enc = tiktoken.get_encoding("gpt2") #baseline gpt2 model
+
 total_batch_size = 524288
 B = 4 #micro batch size ideally want this at 16 at least, but set to 4 to accomodate my gpu situation
 T = 1024 #sequence length
@@ -367,11 +369,45 @@ for step in range(max_steps):
             dist.all_reduce(val_loss_accum, op=dist.reduce_op.AVG)
         if master_process:
             print(f"validation loss: {val_loss_accum.item():.4f}")
-                
+
+    #once in a while evaluate hellaswag
+    if (step % 250 == 0 or last_step) and (not use_compile):
+        num_correct_norm = 0
+        num_total = 0
+        for i, example in enumerate(iterate_examples("val")):
+            #only process examples where i % ddp_world)size == ddp_rank
+            if i % ddp_world_size != ddp_rank:
+                continue
+            #render example into tokens and labels
+            _, tokens, mask, label = render_example(example)
+            tokens = tokens.to(device)
+            mask = mask.to(device)
+            #get logits
+            with torch.no_grad():
+                with torch.autocast(device_type=device, dtype=torch.bfloat16):
+                    logits, loss = model(tokens)
+                pred_norm = get_most_likely_row(tokens, mask, logits)
+            num_total += 1
+            num_correct_norm += int(pred_norm == label)
+        #reduce the stats acorss all processes
+        if ddp:
+            num_total = torch.tensor(num_total, dtype=torch.long, device=device)
+            num_correct_norm = torch.tensor(num_correct_norm, dtype=torch.long, device=device)
+            dist.all_reduce(num_total, op=dist.ReduceOp.SUM)
+            dist.all_reduce(num_correct_norm, op=dist.ReduceOp.SUM)
+            num_total = num_total.item()
+            num_correct_norm = num_correct_norm.item()
+        acc_norm = num_correct_norm / num_total
+        if master_process:
+            print(f"HellaSwag Accuracy: {num_correct_norm}/{num_total}={acc_norm:.4f}")
+            with open(log_file, "a") as f:
+                f.write(f"{step} hella {acc_norm:.4f}\n")
+
+
+
     #once in a while generate from the model (except step 0, which is noise)
-    #disabled because torch.compile throws an error
     #if you disable torch.compile, this code works fine
-    if step > 0 and step % 100 == 0 and False:
+    if (step % 250 == 0 or last_step) and (not use_compile):
         model.eval()
         num_return_sequences = 4
         max_length = 32
@@ -405,6 +441,7 @@ for step in range(max_steps):
             decoded = enc.decode(tokens)
             print(f"rank {ddp_rank} sample {i}: {decoded}")
 
+    #do one step of optimization
     model.train()
     optimizer.zero_grad()
     loss_accum = 0.0
@@ -432,6 +469,8 @@ for step in range(max_steps):
     tokens_per_sec = tokens_processed / dt
     if master_process:
         print(f"step {step} | loss: {loss_accum.item():.6f} | norm: {norm:.4f} | dt: {dt*1000:.2f}ms | tok/sec: {tokens_per_sec:.2f}")
+        with open(log_file, "a") as f:
+            f.write(f"{step} train {loss_accum.item():.6f}\n")
 
 if ddp:
     destroy_process_group()
